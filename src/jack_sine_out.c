@@ -27,11 +27,11 @@ void gen_signal_in_buf(float* buf, size_t buf_length, Oscilator* osc) {
 int process(jack_nframes_t nframes, void* jack_stuff_raw)
 {
   JackStuff* jack_stuff = (JackStuff*)jack_stuff_raw;
-  float* outputBuffer= (float*)jack_port_get_buffer ( jack_stuff->out_port, nframes);
+  float* outputBuffer = (float*)jack_port_get_buffer ( jack_stuff->out_port, nframes);
 
   if(jack_stuff->ringbuffer){
     size_t num_bytes = jack_ringbuffer_read_space (jack_stuff->ringbuffer);
-    if(num_bytes > (nframes* sizeof(float))) {
+    if(num_bytes >= (nframes* sizeof(float))) {
       jack_ringbuffer_read(jack_stuff->ringbuffer, (char*)outputBuffer, nframes * sizeof(float));
     } else {
       for ( int i = 0; i < (int) nframes; i++)
@@ -47,7 +47,7 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
 int main(void) {
   JackStuff jack_stuff = {
     .out_port = 0,
-    .out_port = NULL
+    .ringbuffer = NULL
   };
 
   jack_client_t* client = jack_client_open ("JackSineOut",
