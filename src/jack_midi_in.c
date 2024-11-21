@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -30,8 +31,9 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
     int read = jack_midi_event_get(&ev, jack_midi_in_buffer, i);
     if(ev.size == 3) {
       size_t space = jack_ringbuffer_write_space(jack_stuff->midi_in_ringbuffer);
-      if (space>3) {
-        int written = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev, 3);
+      if (space> 3 + sizeof(jack_nframes_t)) {
+        int written1 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.buffer, 3);
+        int written2 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
       }
     }
   }
@@ -83,7 +85,26 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
   ThreadResult* result = (ThreadResult*)malloc(sizeof( ThreadResult));
   result->midi_msg_count = 0;
   while(result->midi_msg_count < 20 && *(thread_stuff->running)){
-    
+    size_t num_bytes = jack_ringbuffer_read_space (thread_stuff->ringbuffer);
+    jack_midi_event_t ev;
+    size_t received_bytes1 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)ev.buffer, 3*sizeof(char));
+    size_t received_bytes2 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
+    ev.size=3;
+    if(received_bytes1 + received_bytes2 < 3 + sizeof(jack_nframes_t)){
+      // TODO implement notify
+      sleep(1);
+    } else {
+      uint8_t status_byte = ev.buffer[0] >> 4;
+      uint8_t channel = ev.buffer[0] & 0x0f;
+      uint8_t param1 = ev.buffer[1] & 0x7f;
+      uint8_t param2 = ev.buffer[2] & 0x7f;
+      printf("received midi message:\n");
+      printf("  status_byte: %d\n", status_byte);
+      printf("  channel %d:\n", channel);
+      printf("  param1: %d\n", param1);
+      printf("  param2: %d\n", param2);
+      printf("  time: %d\n", ev.time);
+    }
   }
   return result;
 }
