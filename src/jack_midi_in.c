@@ -1,6 +1,14 @@
+#include <pthread.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+
 #include <jack/types.h>
 #include <jack/ringbuffer.h>
 #include <jack/jack.h>
+#include <jack/midiport.h>
+#include <threads.h>
+#include <unistd.h>
 
 typedef struct JackStuff{
   jack_client_t* client;
@@ -61,8 +69,38 @@ void jack_stuff_clear(JackStuff* jack_stuff) {
   free(jack_stuff);
 }
 
+typedef struct ThreadStuff {
+  bool* running;
+  jack_ringbuffer_t* ringbuffer;
+} ThreadStuff;
+
+typedef struct ThreadResult {
+  int midi_msg_count;
+} ThreadResult;
+
+void* midi_print_thread_fct(void* thread_stuff_raw) {
+  ThreadStuff* thread_stuff = (ThreadStuff*) thread_stuff_raw;
+  ThreadResult* result = (ThreadResult*)malloc(sizeof( ThreadResult));
+  result->midi_msg_count = 0;
+  while(result->midi_msg_count < 20 && *(thread_stuff->running)){
+    
+  }
+  return result;
+}
+
 int main(){
   JackStuff* jack_stuff = create_jack_stuff("JackMidiIn");
-  
+  pthread_t midi_print_thread;
+  bool running = true;
+  ThreadStuff thread_stuff = {
+    .running = &running,
+    .ringbuffer = jack_stuff->midi_in_ringbuffer
+  };
+  pthread_create(&midi_print_thread, NULL, midi_print_thread_fct,(void *) &thread_stuff);
+  sleep(20);
+  ThreadResult* result = NULL;
+  pthread_join(midi_print_thread, (void**)&result);
   jack_stuff_clear(jack_stuff);
+  printf("received %d messages\n",result->midi_msg_count);
+  free(result);
 }
