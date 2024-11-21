@@ -33,6 +33,8 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
       size_t space = jack_ringbuffer_write_space(jack_stuff->midi_in_ringbuffer);
       if (space> 3 + sizeof(jack_nframes_t)) {
         int written1 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.buffer, 3);
+        jack_nframes_t current_time_frame = jack_last_frame_time(jack_stuff->client);
+        ev.time += current_time_frame;
         int written2 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
       }
     }
@@ -84,12 +86,13 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
   ThreadStuff* thread_stuff = (ThreadStuff*) thread_stuff_raw;
   ThreadResult* result = (ThreadResult*)malloc(sizeof( ThreadResult));
   result->midi_msg_count = 0;
-  while(result->midi_msg_count < 20 && *(thread_stuff->running)){
+  while(result->midi_msg_count < 30 && *(thread_stuff->running)){
     size_t num_bytes = jack_ringbuffer_read_space (thread_stuff->ringbuffer);
     jack_midi_event_t ev;
     size_t received_bytes1 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)ev.buffer, 3*sizeof(char));
     size_t received_bytes2 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
     ev.size=3;
+    printf("received: %d bytes\n", received_bytes1 + received_bytes2);
     if(received_bytes1 + received_bytes2 < 3 + sizeof(jack_nframes_t)){
       // TODO implement notify
       sleep(1);
@@ -104,8 +107,10 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
       printf("  param1: %d\n", param1);
       printf("  param2: %d\n", param2);
       printf("  time: %d\n", ev.time);
+      result->midi_msg_count+=1;
     }
   }
+  printf("finish printing thread\n");
   return result;
 }
 
@@ -120,8 +125,9 @@ int main(){
   pthread_create(&midi_print_thread, NULL, midi_print_thread_fct,(void *) &thread_stuff);
   sleep(20);
   ThreadResult* result = NULL;
+  thread_stuff.running = false;
   pthread_join(midi_print_thread, (void**)&result);
-  jack_stuff_clear(jack_stuff);
   printf("received %d messages\n",result->midi_msg_count);
+  jack_stuff_clear(jack_stuff);
   free(result);
 }
