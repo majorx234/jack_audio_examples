@@ -27,12 +27,13 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
 
   for (int i = 0;i<event_count;i++) {
     jack_midi_event_t ev;
+
     bool ok  = false;
     int read = jack_midi_event_get(&ev, jack_midi_in_buffer, i);
     if(ev.size == 3) {
       size_t space = jack_ringbuffer_write_space(jack_stuff->midi_in_ringbuffer);
-      if (space> 3 + sizeof(jack_nframes_t)) {
-        int written1 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.buffer, 3);
+      if (space > 3 + sizeof(jack_nframes_t)) {
+        int written1 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)ev.buffer, 3);
         jack_nframes_t current_time_frame = jack_last_frame_time(jack_stuff->client);
         ev.time += current_time_frame;
         int written2 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
@@ -74,7 +75,7 @@ void jack_stuff_clear(JackStuff* jack_stuff) {
 }
 
 typedef struct ThreadStuff {
-  bool* running;
+  bool running;
   jack_ringbuffer_t* ringbuffer;
 } ThreadStuff;
 
@@ -86,17 +87,20 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
   ThreadStuff* thread_stuff = (ThreadStuff*) thread_stuff_raw;
   ThreadResult* result = (ThreadResult*)malloc(sizeof( ThreadResult));
   result->midi_msg_count = 0;
-  while(result->midi_msg_count < 30 && *(thread_stuff->running)){
+  while(result->midi_msg_count < 60 && thread_stuff->running){
     size_t num_bytes = jack_ringbuffer_read_space (thread_stuff->ringbuffer);
+    if(num_bytes < 7){
+      sleep(1);
+      continue;
+    }
     jack_midi_event_t ev;
+    ev.buffer = calloc (3, sizeof (jack_midi_data_t));
     size_t received_bytes1 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)ev.buffer, 3*sizeof(char));
     size_t received_bytes2 = jack_ringbuffer_read(thread_stuff->ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
     ev.size=3;
     printf("received: %d bytes\n", received_bytes1 + received_bytes2);
-    if(received_bytes1 + received_bytes2 < 3 + sizeof(jack_nframes_t)){
-      // TODO implement notify
-      sleep(1);
-    } else {
+
+    if(received_bytes1 + received_bytes2 == 3 + sizeof(jack_nframes_t)){
       uint8_t status_byte = ev.buffer[0] >> 4;
       uint8_t channel = ev.buffer[0] & 0x0f;
       uint8_t param1 = ev.buffer[1] & 0x7f;
@@ -117,9 +121,9 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
 int main(){
   JackStuff* jack_stuff = create_jack_stuff("JackMidiIn");
   pthread_t midi_print_thread;
-  bool running = true;
+
   ThreadStuff thread_stuff = {
-    .running = &running,
+    .running = true,
     .ringbuffer = jack_stuff->midi_in_ringbuffer
   };
   pthread_create(&midi_print_thread, NULL, midi_print_thread_fct,(void *) &thread_stuff);
