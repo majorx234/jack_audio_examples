@@ -1,20 +1,22 @@
-#include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include <jack/types.h>
 #include <jack/ringbuffer.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
-#include <threads.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct JackStuff{
   jack_client_t* client;
   jack_port_t* midi_in_port;
   jack_ringbuffer_t* midi_in_ringbuffer;
+  pthread_mutex_t midi_event_thread_lock;
+  pthread_cond_t data_ready;
 } JackStuff;
 
 int process(jack_nframes_t nframes, void* jack_stuff_raw)
@@ -37,6 +39,10 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
         jack_nframes_t current_time_frame = jack_last_frame_time(jack_stuff->client);
         ev.time += current_time_frame;
         int written2 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
+        if (pthread_mutex_trylock (&jack_stuff->midi_event_thread_lock) == 0) {
+          pthread_cond_signal (&jack_stuff->data_ready);
+          pthread_mutex_unlock (&jack_stuff->midi_event_thread_lock);
+        }
       }
     }
   }
@@ -49,6 +55,8 @@ JackStuff* create_jack_stuff(char* client_name){
   jack_stuff->midi_in_port = NULL;
   jack_stuff->midi_in_ringbuffer = NULL;
   jack_stuff->client = NULL;
+  pthread_mutex_init(&jack_stuff->midi_event_thread_lock, NULL);
+  pthread_cond_init(&jack_stuff->data_ready, NULL);
 
   jack_stuff->client = jack_client_open (client_name,
                                          JackNullOption,
@@ -77,6 +85,8 @@ void jack_stuff_clear(JackStuff* jack_stuff) {
 typedef struct ThreadStuff {
   bool running;
   jack_ringbuffer_t* ringbuffer;
+  pthread_mutex_t* midi_event_thread_lock;
+  pthread_cond_t* data_ready;
 } ThreadStuff;
 
 typedef struct ThreadResult {
@@ -90,7 +100,7 @@ void* midi_print_thread_fct(void* thread_stuff_raw) {
   while(result->midi_msg_count < 60 && thread_stuff->running){
     size_t num_bytes = jack_ringbuffer_read_space (thread_stuff->ringbuffer);
     if(num_bytes < 7){
-      sleep(1);
+      pthread_cond_wait (thread_stuff->data_ready, thread_stuff->midi_event_thread_lock);
       continue;
     }
     jack_midi_event_t ev;
@@ -124,12 +134,20 @@ int main(){
 
   ThreadStuff thread_stuff = {
     .running = true,
-    .ringbuffer = jack_stuff->midi_in_ringbuffer
+    .ringbuffer = jack_stuff->midi_in_ringbuffer,
+    .midi_event_thread_lock = &jack_stuff->midi_event_thread_lock,
+    .data_ready = &jack_stuff->data_ready
   };
   pthread_create(&midi_print_thread, NULL, midi_print_thread_fct,(void *) &thread_stuff);
+  // TODO build in signal handler
   sleep(20);
   ThreadResult* result = NULL;
   thread_stuff.running = false;
+  if (pthread_mutex_trylock (&jack_stuff->midi_event_thread_lock) == 0) {
+    pthread_cond_signal (&jack_stuff->data_ready);
+    pthread_mutex_unlock (&jack_stuff->midi_event_thread_lock);
+  }
+
   pthread_join(midi_print_thread, (void**)&result);
   printf("received %d messages\n",result->midi_msg_count);
   jack_stuff_clear(jack_stuff);
