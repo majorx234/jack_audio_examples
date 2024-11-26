@@ -24,8 +24,10 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
   JackStuff* jack_stuff = (JackStuff*)jack_stuff_raw;
   // midi_in event handling:
   void* jack_midi_in_buffer =  jack_port_get_buffer ( jack_stuff->midi_in_port, nframes);
-  int event_count = jack_midi_get_event_count(jack_midi_in_buffer);
   jack_nframes_t last_frame_time = jack_last_frame_time(jack_stuff->client);
+
+  // get number of midi events
+  int event_count = jack_midi_get_event_count(jack_midi_in_buffer);
 
   for (int i = 0;i<event_count;i++) {
     jack_midi_event_t ev;
@@ -39,6 +41,8 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
         jack_nframes_t current_time_frame = jack_last_frame_time(jack_stuff->client);
         ev.time += current_time_frame;
         int written2 = jack_ringbuffer_write(jack_stuff->midi_in_ringbuffer, (char*)&ev.time, sizeof(jack_nframes_t));
+
+        // notify printing thread
         if (pthread_mutex_trylock (&jack_stuff->midi_event_thread_lock) == 0) {
           pthread_cond_signal (&jack_stuff->data_ready);
           pthread_mutex_unlock (&jack_stuff->midi_event_thread_lock);
@@ -62,13 +66,18 @@ JackStuff* create_jack_stuff(char* client_name){
                                          JackNullOption,
                                          0,
                                          0 );
-  const size_t ringbuffer_size = 4096 * sizeof(float);
+
+  // register jack port for midi input
   jack_stuff->midi_in_port  = jack_port_register (jack_stuff->client,
                                                   "midi_input",
                                                   JACK_DEFAULT_MIDI_TYPE,
                                                   JackPortIsInput, 0);
-  jack_stuff->midi_in_ringbuffer = jack_ringbuffer_create(1024);
 
+  // create ring buffer to exchange data between jack process loop and prinintg thread
+  const size_t ringbuffer_size = 4096 * sizeof(float);
+  jack_stuff->midi_in_ringbuffer = jack_ringbuffer_create(ringbuffer_size);
+
+  // register callback function for jack loop
   jack_set_process_callback(jack_stuff->client, process, (void*)jack_stuff);
   //client.set_sample_rate(48000);
   jack_activate(jack_stuff->client);
@@ -95,9 +104,11 @@ typedef struct ThreadResult {
 
 void* midi_print_thread_fct(void* thread_stuff_raw) {
   ThreadStuff* thread_stuff = (ThreadStuff*) thread_stuff_raw;
+
   ThreadResult* result = (ThreadResult*)malloc(sizeof( ThreadResult));
   result->midi_msg_count = 0;
-  while(result->midi_msg_count < 60 && thread_stuff->running){
+
+  while(thread_stuff->running){
     size_t num_bytes = jack_ringbuffer_read_space (thread_stuff->ringbuffer);
     if(num_bytes < 7){
       pthread_cond_wait (thread_stuff->data_ready, thread_stuff->midi_event_thread_lock);
@@ -139,8 +150,10 @@ int main(){
     .data_ready = &jack_stuff->data_ready
   };
   pthread_create(&midi_print_thread, NULL, midi_print_thread_fct,(void *) &thread_stuff);
+
   // TODO build in signal handler
-  sleep(20);
+  // atm it runs for 1000 seconds
+  sleep(1000);
   ThreadResult* result = NULL;
   thread_stuff.running = false;
   if (pthread_mutex_trylock (&jack_stuff->midi_event_thread_lock) == 0) {
