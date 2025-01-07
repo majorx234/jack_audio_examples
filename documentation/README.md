@@ -3,9 +3,9 @@
 - uses a jack_ringbuffer object between audio generation and output
   - decouple sound generation (maybe non realtime) and output (realtime)
   - normal useful to have generator tread
-- ![Alt text](documentation/images/jack_sine_out.jpg?raw=true "overview over ringbuffer interaction")
+- ![Alt text](images/jack_sine_out.jpg?raw=true "overview over ringbuffer interaction")
 ## ringbuffer pattern
-### in generator thread
+### in main thread
 ```C
 // check if data low in ringbuffer (->need for new data to generate)
 if (num_bytes < low_limit * sizeof(float)) {
