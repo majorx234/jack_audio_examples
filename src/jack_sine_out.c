@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <jack/jack.h>
 #include <math.h>
+#include <unistd.h> 
 
 typedef struct {
   float freq;
@@ -68,8 +69,12 @@ int process(jack_nframes_t nframes, void* jack_stuff_raw)
 
 
 int main(void) {
+  // objects to story oscilator data
+  float my_data_buf[1024];
+  Oscilator my_osci = {.freq = 440, .time_step = 0};
+
   JackStuff jack_stuff = {
-    .out_port = 0,
+    .out_port = NULL,
     .ringbuffer = NULL
   };
 
@@ -86,34 +91,30 @@ int main(void) {
                                     0 );
 
   // create ringbuffer
-  size_t ringbuffer_size = 96000 * sizeof(float);
+  size_t ringbuffer_size = 8192 * sizeof(float);
   jack_stuff.ringbuffer = jack_ringbuffer_create (ringbuffer_size);
 
   // register jack's process function
-  jack_set_process_callback  (client, process , (void*)&ringbuffer_size);
+  jack_set_process_callback  (client, process , (void*)&jack_stuff);
 
   // start jack loop (~thread which is looping process function)
   jack_activate(client);
 
-  float my_data_buf[1024];
-
-  Oscilator my_osci = {.freq = 440, .time_step = 0};
-
   size_t counter = 0;
-  size_t low_limit = 48000;
+  size_t low_limit = 4096; // =1 second with 48000 samples
 
   // run for ten seconds
   while(counter < 48000 * 10 ){
     size_t num_bytes = jack_ringbuffer_read_space (jack_stuff.ringbuffer);
 
     // check if less than one second data
-    if (num_bytes < 48000 * sizeof(float)) {
+    if (num_bytes < low_limit * sizeof(float)) {
       // generate signal
       gen_signal_in_buf(my_data_buf, 1024, &my_osci);
       jack_ringbuffer_write (jack_stuff.ringbuffer, (void *) my_data_buf, 1024*sizeof(float));
       counter += 1024;
     } else {
-      sleep(1);
+      usleep(46875); // 1024 values are 46,875 msec, should be faste than low_limit
     }
   }
 
